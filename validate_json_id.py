@@ -8,50 +8,52 @@ def clean_id(original_id):
       - lowers all letters,
       - removes spaces,
       - removes all special characters except underscore,
+      - now ALLOWS digits (0-9),
       - returns the cleaned id.
     """
     # Lowercase
     new_id = original_id.lower()
     # Remove spaces
     new_id = new_id.replace(" ", "")
-    # Remove all characters except a–z and underscore
-    new_id = re.sub(r'[^a-z_]', '', new_id)
+    # Remove all characters except a–z, 0–9, and underscore
+    new_id = re.sub(r'[^a-z0-9_]', '', new_id)
     return new_id
 
 def highlight_ids_in_text(original_text, invalid_ids):
     """
-    Highlights invalid IDs in the original JSON text using markdown/HTML.
-    'invalid_ids' is a dictionary mapping original_id -> reason (or "duplicate"/"invalid chars").
-    
-    We'll insert HTML <span> tags around each invalid ID so it displays in red in Streamlit.
-    Note: This is a simple approach that does naive string replacement.  If you have the same text
-          in multiple places (not just in the "id" field), it might highlight those too.
+    Highlights invalid IDs in the original JSON text by surrounding them
+    with a <span>, and appending the reason in text ("### reason ###").
+    'invalid_ids' is a dict mapping original_id -> reason string(s).
+
+    Note: This does naive string replacement, which works if the 'id'
+    only appears in contexts like "id": "..." in your JSON.
     """
     highlighted_text = original_text
     for orig_id, reason in invalid_ids.items():
-        # We'll do a simple replace. If the original text contains the string "id": "orig_id",
-        # we highlight `orig_id`.  We anchor on quotes to reduce risk of partial replacements.
-        
-        # Construct a highlight span
-        span = f"<span style='background-color: yellow; color: red;' title='{reason}'>{orig_id}</span>"
-        
-        # Replace the exact occurrence of `orig_id` with the highlighted span
-        # We also check for bounding quotes to reduce false positives.
-        highlighted_text = highlighted_text.replace(f"\"{orig_id}\"", f"\"{span}\"")
+        # Construct the highlight text: "orig_id ### reason ###"
+        highlight_str = f"{orig_id} ### {reason} ###"
+        span = f"<span style='background-color: yellow; color: red;'>{highlight_str}</span>"
+
+        # Replace the exact occurrence of `orig_id` with the new string in quotes
+        highlighted_text = highlighted_text.replace(
+            f"\"{orig_id}\"",
+            f"\"{span}\""
+        )
     return highlighted_text
 
 def main():
-    st.title("ID Validation & Correction for JSON")
+    st.title("ID Validation & Correction for JSON (Letters, Digits, Underscores)")
 
     st.write("""
     1. Paste your JSON in the text area below.  
     2. Click **"Validate & Correct"**.  
     3. The app will:  
-       - Check if IDs are unique,  
-       - Ensure IDs only have lowercase letters and underscores,  
-       - Remove any invalid characters,  
-       - Highlight incorrect/duplicate IDs in the original text,  
-       - Output a corrected JSON.  
+       - Check if IDs are unique  
+       - Convert uppercase letters to lowercase  
+       - Remove spaces and any special characters (except underscore)  
+       - **Allow digits (0–9)**  
+       - Highlight incorrect or duplicate IDs in the original text  
+       - Output a corrected JSON  
     """)
 
     original_text = st.text_area("Paste your JSON here:", height=400)
@@ -72,40 +74,40 @@ def main():
             return
 
         cleaned_ids = set()
-        invalid_ids = {}  # mapping of original_id -> reason
-        # We'll store (original_id -> new_id) so we can highlight.
-        id_map = {}
+        invalid_ids = {}  # { original_id: reason_string }
 
         for obj in data["objects"]:
             if "id" in obj:
                 orig_id = obj["id"]
                 new_id = clean_id(orig_id)
 
-                # Check if something changed:
+                # If cleaning changed the ID, consider it invalid for some reason
                 if new_id != orig_id:
-                    invalid_ids[orig_id] = "invalid characters or uppercase"
+                    invalid_reason = "invalid characters or uppercase"
+                else:
+                    invalid_reason = ""
 
-                # Check duplicates
+                # Check for duplicates
                 if new_id in cleaned_ids:
-                    # We won't automatically rename duplicates, but let's note it
-                    invalid_ids[orig_id] = invalid_ids.get(orig_id, "") + (" (duplicate)" if invalid_ids.get(orig_id) else "duplicate")
+                    if invalid_reason:
+                        invalid_reason += " (duplicate)"
+                    else:
+                        invalid_reason = "duplicate"
+
+                if invalid_reason:
+                    invalid_ids[orig_id] = invalid_reason
+
                 cleaned_ids.add(new_id)
+                obj["id"] = new_id  # Set the corrected ID
 
-                # Assign the corrected ID back
-                obj["id"] = new_id
-                id_map[orig_id] = new_id
-
-        # Now highlight in the original text if needed
+        # Highlight in the original text if needed
         if invalid_ids:
-            st.markdown("### Invalid or Duplicate IDs Found (highlighted below)")
-            st.write("Hover over a highlighted ID to see the reason.")
-
-            # Convert the original text to a form with HTML highlights
+            st.markdown("### Invalid or Duplicate IDs Found")
+            st.write("IDs with issues are highlighted in yellow below. The reason is shown next to them.")
             highlighted_text = highlight_ids_in_text(original_text, invalid_ids)
-            # Display using unsafe_allow_html (since we inserted HTML spans):
             st.markdown(highlighted_text, unsafe_allow_html=True)
         else:
-            st.markdown("### All IDs look good! No invalid or duplicate IDs found.")
+            st.markdown("### All IDs look good!")
             st.text_area("Original JSON", original_text, height=300)
 
         # Show the corrected JSON
@@ -113,7 +115,7 @@ def main():
         st.markdown("### Corrected JSON")
         st.text_area("Corrected JSON Output", corrected_json_str, height=300)
 
-        # Optionally, provide a download button for the corrected JSON:
+        # Optional download button
         st.download_button(
             label="Download Corrected JSON",
             data=corrected_json_str,
